@@ -112,9 +112,9 @@
         document.querySelector("#unity-container").className = "unity-mobile";
         canvas.className = "unity-mobile";
 
-        // To lower canvas resolution on mobile devices to gain some
-        // performance, uncomment the following line:
-        // config.devicePixelRatio = 1;
+        // Performance (Phase 11): phones report 3x pixel ratios (an iPhone canvas would be ~3 million pixels a frame).
+        // 2x is visually indistinguishable at phone distance and renders well under half the pixels.
+        config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
 
 
       } else {
