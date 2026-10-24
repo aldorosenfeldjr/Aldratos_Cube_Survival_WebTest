@@ -130,14 +130,53 @@
         const loadingContainer = document.querySelector("#unity-loading-container");
         const progressBarFull = document.querySelector("#unity-progress-bar-full");
 
-        createUnityInstance(canvas, config, (progress) => {
+        // A big data file comes in parts (GitHub refuses files over 100 MB; see WebTestBuild.SplitDataFile): download them
+        // (the first half of the bar), join them and give Unity the whole file. Without data-parts.json the file is loaded as is.
+        const loadData = () => fetch(buildUrl + "/data-parts.json", { cache: "no-store" })
+          .then((response) => response.ok ? response.json() : null)
+          .catch(() => null)
+          .then((manifest) => {
+            if (!manifest) {
+              return 0;
+            }
+            loadingContainer.style.display = "block";
+            const received = new Array(manifest.parts).fill(0);
+            const showProgress = () => {
+              const done = received.reduce((a, b) => a + b, 0);
+              progressBarFull.style.width = 50 * done / manifest.bytes + "%";
+            };
+            const part = (i) => fetch(buildUrl + "/" + manifest.file + ".part" + i).then((response) => {
+              const reader = response.body.getReader();
+              const chunks = [];
+              const pump = () => reader.read().then(({ done, value }) => {
+                if (done) {
+                  return new Blob(chunks);
+                }
+                chunks.push(value);
+                received[i] += value.length;
+                showProgress();
+                return pump();
+              });
+              return pump();
+            });
+            const all = [];
+            for (let i = 0; i < manifest.parts; i++) {
+              all.push(part(i));
+            }
+            return Promise.all(all).then((blobs) => {
+              config.dataUrl = URL.createObjectURL(new Blob(blobs));
+              return 0.5;
+            });
+          });
+
+        loadData().then((start) => createUnityInstance(canvas, config, (progress) => {
           if (progress < 1) {
             loadingContainer.style.display = "block";
-            progressBarFull.style.width = 100 * progress + "%";
+            progressBarFull.style.width = 100 * (start + (1 - start) * progress) + "%";
           } else {
             loadingContainer.style.display = "none";
           }
-        }).then((unityInstance) => {
+        })).then((unityInstance) => {
                 document.querySelector("#unity-fullscreen-button").onclick = () => {
                   unityInstance.SetFullscreen(1);
                 };
