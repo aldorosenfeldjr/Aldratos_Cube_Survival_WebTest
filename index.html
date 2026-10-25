@@ -23,6 +23,12 @@
           </div>
         </div>
       </div>
+      <div id="rotate-overlay" style="display:none;position:fixed;inset:0;z-index:1000;background:#1b163a;color:#fff;font-family:sans-serif;text-align:center;flex-direction:column;align-items:center;justify-content:center;">
+        <div style="width:56px;height:96px;border:5px solid #ffd45a;border-radius:12px;margin-bottom:28px;animation:cubed-rotate 1.6s ease-in-out infinite;"></div>
+        <div style="font-size:24px;font-weight:bold;">Rotate your phone</div>
+        <div style="font-size:16px;opacity:0.8;margin-top:8px;">Cubed is played sideways</div>
+      </div>
+      <style>@keyframes cubed-rotate { 0%,20% { transform: rotate(0deg); } 60%,100% { transform: rotate(-90deg); } }</style>
       <div id="unity-warning"> </div>
       <div id="unity-footer">
         <div id="unity-logo-title-footer"></div>
@@ -116,6 +122,34 @@
         // 2x is visually indistinguishable at phone distance and renders well under half the pixels.
         config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
 
+        // Landscape only: phones held upright see a "Rotate your phone" card (the run pauses behind it). Android can also lock the
+        // screen sideways once the page is fullscreen (the first tap asks for it); iOS Safari cannot lock, so the card does the job.
+        const rotateOverlay = document.querySelector("#rotate-overlay");
+        const portrait = window.matchMedia("(orientation: portrait)");
+        const showRotate = () => {
+          const upright = portrait.matches;
+          rotateOverlay.style.display = upright ? "flex" : "none";
+          if (upright && window.cubedInstance) {
+            try { window.cubedInstance.SendMessage("GameManager", "Pause"); } catch (e) { }
+          }
+        };
+        portrait.addEventListener ? portrait.addEventListener("change", showRotate) : portrait.addListener(showRotate);
+        window.addEventListener("resize", showRotate);
+        showRotate();
+        const lockLandscape = () => {
+          const root = document.documentElement;
+          const request = root.requestFullscreen || root.webkitRequestFullscreen;
+          const lock = () => screen.orientation && screen.orientation.lock ? screen.orientation.lock("landscape").catch(() => { }) : null;
+          if (request && !document.fullscreenElement) {
+            Promise.resolve(request.call(root)).then(lock).catch(() => { });
+          } else {
+            lock();
+          }
+        };
+        if (/Android/i.test(navigator.userAgent)) {
+          document.addEventListener("pointerdown", lockLandscape, { once: true });
+        }
+
 
       } else {
         // Desktop style: Render the game canvas container in a window that can be maximized to fullscreen:
@@ -177,6 +211,7 @@
             loadingContainer.style.display = "none";
           }
         })).then((unityInstance) => {
+                window.cubedInstance = unityInstance;
                 document.querySelector("#unity-fullscreen-button").onclick = () => {
                   unityInstance.SetFullscreen(1);
                 };
