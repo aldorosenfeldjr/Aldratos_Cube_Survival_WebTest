@@ -28,6 +28,11 @@
         <div style="font-size:24px;font-weight:bold;">Rotate your phone</div>
         <div style="font-size:16px;opacity:0.8;margin-top:8px;">Cubed is played sideways</div>
       </div>
+      <div id="cubed-resume" style="display:none;position:fixed;inset:0;z-index:1001;background:#1b163a;color:#fff;font-family:sans-serif;text-align:center;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;">
+        <div style="font-size:30px;font-weight:bold;margin-bottom:12px;">Cubed</div>
+        <div id="cubed-resume-text" style="font-size:22px;padding:14px 28px;border-radius:14px;background:#ffd45a;color:#1b163a;font-weight:bold;">Tap to continue</div>
+        <div id="cubed-resume-sub" style="font-size:14px;margin-top:14px;opacity:0.8;">Your progress is saved.</div>
+      </div>
       <style>@keyframes cubed-rotate { 0%,20% { transform: rotate(0deg); } 60%,100% { transform: rotate(-90deg); } }</style>
       <div id="unity-warning"> </div>
       <div id="unity-footer">
@@ -158,8 +163,51 @@
       }
 
 
+      // Coming back to the tab: if the browser dropped the game's WebGL context (common on phones after switching apps) or the game
+      // stopped drawing, a "Tap to continue" card reloads the page instead of leaving a frozen screen. Progress is in the save.
+      const lang = (navigator.language || "en").toLowerCase();
+      const words = lang.startsWith("pt") ? ["Toque para continuar", "Seu progresso está salvo.", "Não foi possível carregar. Toque para tentar de novo."]
+        : lang.startsWith("es") ? ["Toca para continuar", "Tu progreso está guardado.", "No se pudo cargar. Toca para reintentar."]
+        : ["Tap to continue", "Your progress is saved.", "Couldn't load the game. Tap to try again."];
+      const resumeCard = document.querySelector("#cubed-resume");
+      const showResume = (failed) => {
+        document.querySelector("#cubed-resume-text").textContent = failed ? words[2] : words[0];
+        document.querySelector("#cubed-resume-sub").textContent = failed ? "" : words[1];
+        resumeCard.style.display = "flex";
+        window.cubedResumeShown = failed ? "failed" : "lost";
+      };
+      resumeCard.addEventListener("click", () => location.reload());
+      canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); showResume(false); }, false);
+      const send = (method) => { try { window.cubedInstance && window.cubedInstance.SendMessage("WebLifecycle", method); } catch (e) { } };
+      const checkAlive = () => {
+        if (!window.cubedInstance || resumeCard.style.display === "flex") {
+          return;
+        }
+        let lost = false;
+        try {
+          const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+          lost = !gl || gl.isContextLost();
+        } catch (e) { lost = true; }
+        const stale = performance.now() - (window.cubedHeartbeat || 0) > 2500;
+        if (lost || stale) {
+          showResume(false);
+        }
+      };
+      window.cubedCheckAlive = checkAlive;
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          send("OnHidden");
+        } else {
+          send("OnVisible");
+          setTimeout(checkAlive, 3000);
+        }
+      });
+      window.addEventListener("pagehide", () => send("OnHidden"));
+      window.addEventListener("pageshow", (e) => { if (e.persisted) { setTimeout(checkAlive, 3000); } });
+
       var script = document.createElement("script");
       script.src = loaderUrl;
+      script.onerror = () => showResume(true);
       script.onload = () => {
         const loadingContainer = document.querySelector("#unity-loading-container");
         const progressBarFull = document.querySelector("#unity-progress-bar-full");
@@ -217,7 +265,8 @@
                 };
 
               }).catch((message) => {
-                alert(message);
+                console.error(message);
+                showResume(true);
               });
             };
 
