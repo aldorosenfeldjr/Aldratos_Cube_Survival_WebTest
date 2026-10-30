@@ -6,12 +6,19 @@
     <title>Cubed</title>
     <!-- iOS: lets "Add to Home Screen" launch with no Safari chrome (address bar, tab bar) at all. -->
     <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Cubed">
+    <meta name="theme-color" content="#1b163a">
+    <!-- Every device: the game fills the whole screen (no zoom, under the notch with safe-area insets handled in game). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, minimal-ui">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png">
     <link rel="shortcut icon" href="TemplateData/favicon.ico">
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
-    <div id="unity-container" class="unity-desktop">
+    <div id="unity-container">
       <div id="unity-fullscreen-container">
         <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
         <div id="unity-loading-container">
@@ -35,9 +42,10 @@
       </div>
       <style>@keyframes cubed-rotate { 0%,20% { transform: rotate(0deg); } 60%,100% { transform: rotate(-90deg); } }</style>
       <div id="unity-warning"> </div>
-      <div id="unity-footer">
-        <div id="unity-logo-title-footer"></div>
-        <div id="unity-fullscreen-button"></div>
+      <div id="cubed-fs-button" title="Full screen"></div>
+      <div id="cubed-ios-hint"><span id="cubed-ios-hint-text"></span><button id="cubed-ios-hint-ok">OK</button></div>
+      <!-- Kept hidden: development builds hang their profiler buttons on the build title. -->
+      <div id="unity-footer" style="display:none">
         <div id="unity-build-title">Cubed</div>
       </div>
     </div>
@@ -113,22 +121,94 @@
       // JS_FileSystem_Sync() behavior, but in future Unity version, this will be
       // expected to change.
 
-      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-        // Mobile device style: fill the whole browser client area with the game canvas:
+      // Device class. iPadOS Safari reports a Mac desktop user agent, so touch is detected from the hardware (maxTouchPoints /
+      // coarse pointer), not only from the user agent.
+      const ua = navigator.userAgent || "";
+      const touch = (navigator.maxTouchPoints || 0) > 1 || window.matchMedia("(pointer: coarse)").matches || /iPhone|iPad|iPod|Android/i.test(ua);
+      const iOS = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && (navigator.maxTouchPoints || 0) > 1);
+      const shortSide = Math.min(screen.width || window.innerWidth, screen.height || window.innerHeight);
+      const tablet = touch && shortSide >= 600;
+      const standalone = window.matchMedia("(display-mode: fullscreen)").matches || window.matchMedia("(display-mode: standalone)").matches
+        || window.navigator.standalone === true;
+      window.cubedDevice = { touch: touch, iOS: iOS, tablet: tablet, standalone: standalone };
+      document.querySelector("#unity-container").className = touch ? "unity-mobile" : "unity-desktop";
+      canvas.className = touch ? "unity-mobile" : "unity-desktop";
 
-        var meta = document.createElement('meta');
-        meta.name = 'viewport';
-        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes, viewport-fit=cover';
-        document.getElementsByTagName('head')[0].appendChild(meta);
-        document.querySelector("#unity-container").className = "unity-mobile";
-        canvas.className = "unity-mobile";
+      // Performance: the canvas is drawn at a capped pixel ratio. Phones report 3x (an iPhone would be ~3 million pixels a frame);
+      // tablets have big screens, so they get less (1.5x); 2x on phones and desktops is visually the same at play distance.
+      // The game can lower its own render scale further when the frame rate drops (AdaptiveResolution).
+      config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, tablet ? 1.5 : 2);
 
-        // Performance (Phase 11): phones report 3x pixel ratios (an iPhone canvas would be ~3 million pixels a frame).
-        // 2x is visually indistinguishable at phone distance and renders well under half the pixels.
-        config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      // Real fullscreen where the browser allows it (Android, desktop): the first tap/click asks for it (and on phones locks the
+      // screen sideways); a small corner button toggles it. iOS/iPadOS Safari cannot fullscreen a page: "Add to Home Screen"
+      // starts the game from the icon with no browser bars (manifest + apple-mobile-web-app-capable), and a one-time hint says so.
+      const root = document.documentElement;
+      const fsRequest = root.requestFullscreen || root.webkitRequestFullscreen;
+      const fsExit = document.exitFullscreen || document.webkitExitFullscreen;
+      const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+      const canFullscreen = !!fsRequest && !iOS && !standalone;
+      const lockLandscape = () => {
+        try {
+          if (touch && screen.orientation && screen.orientation.lock) {
+            screen.orientation.lock("landscape").catch(() => { });
+          }
+        } catch (e) { }
+      };
+      const enterFullscreen = () => {
+        if (!canFullscreen || fsElement()) {
+          return;
+        }
+        try {
+          Promise.resolve(fsRequest.call(root, { navigationUI: "hide" })).then(lockLandscape).catch(() => { });
+        } catch (e) { }
+      };
+      const fsButton = document.querySelector("#cubed-fs-button");
+      let fadeTimer = 0;
+      const showFsButton = () => {
+        if (!canFullscreen || fsElement()) {
+          fsButton.style.display = "none";
+          return;
+        }
+        fsButton.style.display = "block";
+        fsButton.classList.remove("faded");
+        clearTimeout(fadeTimer);
+        fadeTimer = setTimeout(() => fsButton.classList.add("faded"), 4000);
+      };
+      fsButton.addEventListener("click", (e) => { e.stopPropagation(); fsElement() ? (fsExit && fsExit.call(document)) : enterFullscreen(); });
+      document.addEventListener("fullscreenchange", showFsButton);
+      document.addEventListener("webkitfullscreenchange", showFsButton);
+      if (!touch) {
+        window.addEventListener("mousemove", showFsButton, { passive: true });
+      }
+      if (canFullscreen) {
+        // Touch devices go fullscreen on the first tap; desktops on the first click (browsers only allow it from a user gesture).
+        document.addEventListener("pointerup", enterFullscreen, { once: true });
+        showFsButton();
+      }
 
-        // Landscape only: phones held upright see a "Rotate your phone" card (the run pauses behind it). Android can also lock the
-        // screen sideways once the page is fullscreen (the first tap asks for it); iOS Safari cannot lock, so the card does the job.
+      // iOS / iPadOS in Safari (not already launched from the home screen): a friendly one-time hint.
+      if (iOS && !standalone) {
+        let hinted = false;
+        try { hinted = localStorage.getItem("cubed.a2hsHint") === "1"; } catch (e) { }
+        if (!hinted) {
+          const langHint = (navigator.language || "en").toLowerCase();
+          const hintText = langHint.startsWith("pt") ? "Para tela cheia: toque em <b>Compartilhar</b> e em <b>Adicionar à Tela de Início</b>."
+            : langHint.startsWith("es") ? "Para pantalla completa: toca <b>Compartir</b> y <b>Añadir a pantalla de inicio</b>."
+            : "For full screen: tap <b>Share</b>, then <b>Add to Home Screen</b>.";
+          const hint = document.querySelector("#cubed-ios-hint");
+          document.querySelector("#cubed-ios-hint-text").innerHTML = hintText;
+          const closeHint = () => {
+            hint.style.display = "none";
+            try { localStorage.setItem("cubed.a2hsHint", "1"); } catch (e) { }
+          };
+          document.querySelector("#cubed-ios-hint-ok").addEventListener("click", (e) => { e.stopPropagation(); closeHint(); });
+          setTimeout(() => { hint.style.display = "flex"; }, 1500);
+          setTimeout(() => { hint.style.display = "none"; }, 20000); // hides itself, but comes back next visit until OK is tapped
+        }
+      }
+
+      if (touch) {
+        // Landscape only: devices held upright see a "Rotate your phone" card (the run pauses behind it).
         const rotateOverlay = document.querySelector("#rotate-overlay");
         const portrait = window.matchMedia("(orientation: portrait)");
         const showRotate = () => {
@@ -141,26 +221,11 @@
         portrait.addEventListener ? portrait.addEventListener("change", showRotate) : portrait.addListener(showRotate);
         window.addEventListener("resize", showRotate);
         showRotate();
-        const lockLandscape = () => {
-          const root = document.documentElement;
-          const request = root.requestFullscreen || root.webkitRequestFullscreen;
-          const lock = () => screen.orientation && screen.orientation.lock ? screen.orientation.lock("landscape").catch(() => { }) : null;
-          if (request && !document.fullscreenElement) {
-            Promise.resolve(request.call(root)).then(lock).catch(() => { });
-          } else {
-            lock();
-          }
-        };
-        if (/Android/i.test(navigator.userAgent)) {
-          document.addEventListener("pointerdown", lockLandscape, { once: true });
-        }
-
-
-      } else {
-        // Desktop style: Render the game canvas container in a window that can be maximized to fullscreen:
-        fullscreenContainer.style.width = "960px";
-        fullscreenContainer.style.height = "600px";
+        // iOS Safari: no rubber-band scrolling or pinch zoom pulling the page around under the game.
+        document.addEventListener("touchmove", (e) => { if (e.touches && e.touches.length > 1) { e.preventDefault(); } }, { passive: false });
+        document.addEventListener("gesturestart", (e) => e.preventDefault());
       }
+
 
 
       // Coming back to the tab: if the browser dropped the game's WebGL context (common on phones after switching apps) or the game
@@ -252,6 +317,9 @@
           });
 
         loadData().then((start) => createUnityInstance(canvas, config, (progress) => {
+          if (window.cubedInstance) {
+            return; // late progress reports (after the game is up) must not bring the loading bar back over it
+          }
           if (progress < 1) {
             loadingContainer.style.display = "block";
             progressBarFull.style.width = 100 * (start + (1 - start) * progress) + "%";
@@ -260,9 +328,7 @@
           }
         })).then((unityInstance) => {
                 window.cubedInstance = unityInstance;
-                document.querySelector("#unity-fullscreen-button").onclick = () => {
-                  unityInstance.SetFullscreen(1);
-                };
+                loadingContainer.style.display = "none"; // never leave the loading bar (and its blur) over the game
 
               }).catch((message) => {
                 console.error(message);
