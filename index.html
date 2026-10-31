@@ -50,6 +50,29 @@
       </div>
     </div>
     <script>
+      // Sound is simply on: no prompt. Every audio context the game opens is remembered and resumed right away (browsers that
+      // allow autoplay for this site start it at once) and again on the very first input of any kind - click, tap, key or
+      // wheel - since some browsers only let a page make sound after the player has interacted with it.
+      (function () {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) { return; }
+        const contexts = [];
+        const Wrapped = function () {
+          const ctx = new (Function.prototype.bind.apply(Ctx, [null].concat(Array.prototype.slice.call(arguments))))();
+          contexts.push(ctx);
+          try { ctx.resume().catch(() => { }); } catch (e) { }
+          return ctx;
+        };
+        Wrapped.prototype = Ctx.prototype;
+        window.AudioContext = Wrapped;
+        if (window.webkitAudioContext) { window.webkitAudioContext = Wrapped; }
+        const resumeAll = () => {
+          contexts.forEach((ctx) => { try { if (ctx.state !== "running") { ctx.resume().catch(() => { }); } } catch (e) { } });
+        };
+        ["pointerdown", "pointerup", "touchstart", "touchend", "keydown", "mousedown", "wheel"].forEach((type) =>
+          window.addEventListener(type, resumeAll, { capture: true, passive: true }));
+        document.addEventListener("visibilitychange", () => { if (!document.hidden) { resumeAll(); } });
+      })();
       let canvas = document.querySelector("#unity-canvas");
       let fullscreenContainer = document.querySelector("#unity-fullscreen-container");
 
@@ -139,7 +162,7 @@
       // The game can lower its own render scale further when the frame rate drops (AdaptiveResolution).
       config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, tablet ? 1.5 : 2);
 
-      // Real fullscreen where the browser allows it (Android, desktop): the first tap/click asks for it (and on phones locks the
+      // Real fullscreen where the browser allows it (Android, desktop): on touch devices the first tap asks for it (and on phones locks the
       // screen sideways); a small corner button toggles it. iOS/iPadOS Safari cannot fullscreen a page: "Add to Home Screen"
       // starts the game from the icon with no browser bars (manifest + apple-mobile-web-app-capable), and a one-time hint says so.
       const root = document.documentElement;
@@ -181,8 +204,11 @@
         window.addEventListener("mousemove", showFsButton, { passive: true });
       }
       if (canFullscreen) {
-        // Touch devices go fullscreen on the first tap; desktops on the first click (browsers only allow it from a user gesture).
-        document.addEventListener("pointerup", enterFullscreen, { once: true });
+        // Touch devices go fullscreen on the first tap (browsers only allow it from a user gesture). Desktops stay in the
+        // browser window as opened; the corner button is how a PC player goes fullscreen.
+        if (touch) {
+          document.addEventListener("pointerup", enterFullscreen, { once: true });
+        }
         showFsButton();
       }
 
