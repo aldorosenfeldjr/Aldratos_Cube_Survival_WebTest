@@ -72,6 +72,18 @@
         ["pointerdown", "pointerup", "touchstart", "touchend", "keydown", "mousedown", "wheel"].forEach((type) =>
           window.addEventListener(type, resumeAll, { capture: true, passive: true }));
         document.addEventListener("visibilitychange", () => { if (!document.hidden) { resumeAll(); } });
+        // A gamepad (PS5 / Xbox, also through Sunshine/Moonlight): retry the sound on its first presses too. Browsers may only
+        // count a click or key as permission for sound, so this is a best effort; any click or key starts it for sure.
+        window.addEventListener("gamepadconnected", resumeAll);
+        let padTries = 0;
+        const padPoll = () => {
+          try {
+            const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+            for (const p of pads) { if (p && p.buttons && p.buttons.some((b) => b.pressed)) { resumeAll(); padTries++; break; } }
+          } catch (e) { }
+          if (padTries < 20) { setTimeout(padPoll, 250); }
+        };
+        padPoll();
       })();
       let canvas = document.querySelector("#unity-canvas");
       let fullscreenContainer = document.querySelector("#unity-fullscreen-container");
@@ -156,6 +168,20 @@
       window.cubedDevice = { touch: touch, iOS: iOS, tablet: tablet, standalone: standalone };
       document.querySelector("#unity-container").className = touch ? "unity-mobile" : "unity-desktop";
       canvas.className = touch ? "unity-mobile" : "unity-desktop";
+
+      // iOS home-screen app with a translucent status bar: CSS 100vh/100dvh comes out one status bar short, which left a black band
+      // at the bottom. The game box takes the real window height from JS instead (the whole screen in a home-screen app).
+      const fitHeight = () => {
+        let h = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
+        if (iOS && standalone && screen.width && screen.height) {
+          const landscape = (window.innerWidth || 0) > (window.innerHeight || 0);
+          h = Math.max(h, landscape ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height));
+        }
+        if (h > 0) document.documentElement.style.setProperty("--cubed-h", h + "px");
+      };
+      fitHeight();
+      window.addEventListener("resize", fitHeight);
+      window.addEventListener("orientationchange", () => setTimeout(fitHeight, 250));
 
       // Performance: the canvas is drawn at a capped pixel ratio. Phones report 3x (an iPhone would be ~3 million pixels a frame);
       // tablets have big screens, so they get less (1.5x); 2x on phones and desktops is visually the same at play distance.
