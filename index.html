@@ -15,6 +15,8 @@
     <link rel="manifest" href="manifest.webmanifest">
     <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png">
     <link rel="shortcut icon" href="TemplateData/favicon.ico">
+    <link rel="icon" type="image/png" sizes="32x32" href="TemplateData/favicon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="TemplateData/favicon-16.png">
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
@@ -23,10 +25,13 @@
         <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
         <div id="unity-loading-container">
           <div id="unity-loading-bar">
-            <div id="unity-logo"></div>
+            <div id="cubed-logo"></div>
+            <div id="cubed-title">CUBED</div>
             <div id="unity-progress-bar-empty">
               <div id="unity-progress-bar-full"></div>
             </div>
+            <div id="cubed-percent">0%</div>
+            <div id="cubed-tip"></div>
           </div>
         </div>
       </div>
@@ -329,6 +334,37 @@
         const loadingContainer = document.querySelector("#unity-loading-container");
         const progressBarFull = document.querySelector("#unity-progress-bar-full");
 
+        // Branded loading screen: bar + percent + a rotating tip in the browser's language; it fades into the game.
+        const cubedPercent = document.querySelector("#cubed-percent");
+        const cubedProgress = (f) => {
+          const pct = Math.max(0, Math.min(100, Math.round(f * 100)));
+          progressBarFull.style.width = pct + "%";
+          cubedPercent.textContent = pct + "%";
+        };
+        const cubedHideLoader = () => {
+          if (loadingContainer.classList.contains("gone")) {
+            return;
+          }
+          loadingContainer.classList.add("gone");
+          setTimeout(() => { loadingContainer.style.display = "none"; }, 600);
+          clearInterval(window.cubedTipTimer);
+        };
+        const lang = (navigator.language || "en").slice(0, 2);
+        const tips = {
+          en: ["Dodge the falling crates!", "Grab power-ups for a boost", "Swipe up to jump (once you learn it)", "Crates that break on the floor pay coins", "Find the story pages in every world", "Your companion levels up as you play"],
+          pt: ["Desvie das caixas que caem!", "Pegue power-ups para um empurrão", "Deslize para cima para pular (quando aprender)", "Caixas que quebram no chão dão moedas", "Ache as páginas da história em cada mundo", "Seu companheiro sobe de nível enquanto você joga"],
+          es: ["¡Esquiva las cajas que caen!", "Agarra power-ups para un empujón", "Desliza hacia arriba para saltar (cuando lo aprendas)", "Las cajas que se rompen en el suelo dan monedas", "Encuentra las páginas de la historia en cada mundo", "Tu compañero sube de nivel mientras juegas"],
+        }[lang] || null;
+        const tipList = tips || ["Dodge the falling crates!", "Grab power-ups for a boost", "Crates that break on the floor pay coins"];
+        const tipEl = document.querySelector("#cubed-tip");
+        let tipIndex = Math.floor(Math.random() * tipList.length);
+        const nextTip = () => {
+          tipEl.classList.remove("show");
+          setTimeout(() => { tipEl.textContent = tipList[tipIndex++ % tipList.length]; tipEl.classList.add("show"); }, 300);
+        };
+        nextTip();
+        window.cubedTipTimer = setInterval(nextTip, 3500);
+
         // A big data file comes in parts (GitHub refuses files over 100 MB; see WebTestBuild.SplitDataFile): download them
         // (the first half of the bar), join them and give Unity the whole file. Without data-parts.json the file is loaded as is.
         const loadData = () => fetch(buildUrl + "/data-parts.json", { cache: "no-store" })
@@ -342,7 +378,7 @@
             const received = new Array(manifest.parts).fill(0);
             const showProgress = () => {
               const done = received.reduce((a, b) => a + b, 0);
-              progressBarFull.style.width = 50 * done / manifest.bytes + "%";
+              cubedProgress(0.5 * done / manifest.bytes);
             };
             const part = (i) => fetch(buildUrl + "/" + manifest.file + ".part" + i).then((response) => {
               const reader = response.body.getReader();
@@ -374,13 +410,13 @@
           }
           if (progress < 1) {
             loadingContainer.style.display = "block";
-            progressBarFull.style.width = 100 * (start + (1 - start) * progress) + "%";
+            cubedProgress(start + (1 - start) * progress);
           } else {
-            loadingContainer.style.display = "none";
+            cubedHideLoader();
           }
         })).then((unityInstance) => {
                 window.cubedInstance = unityInstance;
-                loadingContainer.style.display = "none"; // never leave the loading bar (and its blur) over the game
+                cubedHideLoader(); // never leave the loading screen over the game
 
               }).catch((message) => {
                 console.error(message);
