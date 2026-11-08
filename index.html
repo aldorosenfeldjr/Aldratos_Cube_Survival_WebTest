@@ -12,12 +12,12 @@
     <meta name="theme-color" content="#1b163a">
     <!-- Every device: the game fills the whole screen (no zoom, under the notch with safe-area insets handled in game). -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, minimal-ui">
-    <link rel="manifest" href="manifest.webmanifest?v=202611080040">
-    <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png?v=202611080040">
-    <link rel="icon" href="TemplateData/favicon.ico?v=202611080040" sizes="any">
-    <link rel="shortcut icon" href="TemplateData/favicon.ico?v=202611080040">
-    <link rel="icon" type="image/png" sizes="32x32" href="TemplateData/favicon-32.png?v=202611080040">
-    <link rel="icon" type="image/png" sizes="16x16" href="TemplateData/favicon-16.png?v=202611080040">
+    <link rel="manifest" href="manifest.webmanifest?v=202611081259">
+    <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png?v=202611081259">
+    <link rel="icon" href="TemplateData/favicon.ico?v=202611081259" sizes="any">
+    <link rel="shortcut icon" href="TemplateData/favicon.ico?v=202611081259">
+    <link rel="icon" type="image/png" sizes="32x32" href="TemplateData/favicon-32.png?v=202611081259">
+    <link rel="icon" type="image/png" sizes="16x16" href="TemplateData/favicon-16.png?v=202611081259">
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
@@ -394,41 +394,77 @@
         nextTip();
         window.cubedTipTimer = setInterval(nextTip, 3500);
 
-        // A big data file comes in parts (GitHub refuses files over 100 MB; see WebTestBuild.SplitDataFile): download them
-        // (the first half of the bar), join them and give Unity the whole file. Without data-parts.json the file is loaded as is.
+        // The data file comes in parts (GitHub refuses files over 100 MB; see WebTestBuild.SplitDataFile). data-parts.json names
+        // two variants: the ASTC textures (phones) and "dxt" (desktop / TV GPUs, which cannot read ASTC: Unity would unpack every
+        // texture in software at load). Parts are kept in the browser's Cache Storage per build stamp, so a second visit skips the
+        // download; a gzip data file is unpacked by the browser's native DecompressionStream instead of Unity's JS fallback.
+        // Without data-parts.json Unity loads the plain data file itself.
+        const gpuReadsAstc = (() => {
+          try {
+            const c = document.createElement("canvas");
+            const gl = c.getContext("webgl2") || c.getContext("webgl");
+            return !!(gl && gl.getExtension("WEBGL_compressed_texture_astc"));
+          } catch (e) { return true; }
+        })();
+        const openCache = () => ("caches" in window ? caches.open("cubed-data").catch(() => null) : Promise.resolve(null));
         const loadData = () => fetch(buildUrl + "/data-parts.json", { cache: "no-store" })
           .then((response) => response.ok ? response.json() : null)
           .catch(() => null)
-          .then((manifest) => {
-            if (!manifest) {
+          .then((all) => {
+            if (!all) {
               return 0;
             }
+            const manifest = (!gpuReadsAstc && all.dxt) ? all.dxt : all;
+            const stamp = all.stamp || "";
             loadingContainer.style.display = "block";
             const received = new Array(manifest.parts).fill(0);
             const showProgress = () => {
               const done = received.reduce((a, b) => a + b, 0);
               cubedProgress(0.8 * done / manifest.bytes, W.dl + " " + mb(done) + " / " + mb(manifest.bytes) + " MB");
             };
-            const part = (i) => fetch(buildUrl + "/" + manifest.file + ".part" + i).then((response) => {
-              const reader = response.body.getReader();
-              const chunks = [];
-              const pump = () => reader.read().then(({ done, value }) => {
-                if (done) {
-                  return new Blob(chunks);
+            return openCache().then((cache) => {
+              if (cache) {
+                // Drop parts of older builds so the cache never grows past one build.
+                cache.keys().then((keys) => keys.forEach((k) => { if (k.url.indexOf("v=" + stamp) < 0) { cache.delete(k); } })).catch(() => {});
+              }
+              const part = (i) => {
+                const url = buildUrl + "/" + manifest.file + ".part" + i + "?v=" + stamp;
+                const download = () => fetch(url).then((response) => {
+                  const reader = response.body.getReader();
+                  const chunks = [];
+                  const pump = () => reader.read().then(({ done, value }) => {
+                    if (done) {
+                      const blob = new Blob(chunks);
+                      if (cache) { cache.put(url, new Response(blob)).catch(() => {}); }
+                      return blob;
+                    }
+                    chunks.push(value);
+                    received[i] += value.length;
+                    showProgress();
+                    return pump();
+                  });
+                  return pump();
+                });
+                if (!cache) {
+                  return download();
                 }
-                chunks.push(value);
-                received[i] += value.length;
-                showProgress();
-                return pump();
-              });
-              return pump();
-            });
-            const all = [];
-            for (let i = 0; i < manifest.parts; i++) {
-              all.push(part(i));
-            }
-            return Promise.all(all).then((blobs) => {
-              config.dataUrl = URL.createObjectURL(new Blob(blobs));
+                return cache.match(url).then((hit) => hit ? hit.blob().then((blob) => { received[i] = blob.size; showProgress(); return blob; }) : download())
+                  .catch(() => download());
+              };
+              const parts = [];
+              for (let i = 0; i < manifest.parts; i++) {
+                parts.push(part(i));
+              }
+              return Promise.all(parts);
+            }).then((blobs) => {
+              const joined = new Blob(blobs);
+              if (all.gzip && "DecompressionStream" in window) {
+                cubedStage(W.unpack, 0.8, 0.86);
+                return new Response(joined.stream().pipeThrough(new DecompressionStream("gzip"))).blob()
+                  .then((raw) => { clearInterval(stageTimer); stageTimer = null; config.dataUrl = URL.createObjectURL(raw); return 0.86; })
+                  .catch(() => { clearInterval(stageTimer); stageTimer = null; config.dataUrl = URL.createObjectURL(joined); return 0.8; });
+              }
+              config.dataUrl = URL.createObjectURL(joined);
               return 0.8;
             });
           });
