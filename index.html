@@ -12,12 +12,12 @@
     <meta name="theme-color" content="#1b163a">
     <!-- Every device: the game fills the whole screen (no zoom, under the notch with safe-area insets handled in game). -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, minimal-ui">
-    <link rel="manifest" href="manifest.webmanifest?v=202611081259">
-    <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png?v=202611081259">
-    <link rel="icon" href="TemplateData/favicon.ico?v=202611081259" sizes="any">
-    <link rel="shortcut icon" href="TemplateData/favicon.ico?v=202611081259">
-    <link rel="icon" type="image/png" sizes="32x32" href="TemplateData/favicon-32.png?v=202611081259">
-    <link rel="icon" type="image/png" sizes="16x16" href="TemplateData/favicon-16.png?v=202611081259">
+    <link rel="manifest" href="manifest.webmanifest?v=202611081723">
+    <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png?v=202611081723">
+    <link rel="icon" href="TemplateData/favicon.ico?v=202611081723" sizes="any">
+    <link rel="shortcut icon" href="TemplateData/favicon.ico?v=202611081723">
+    <link rel="icon" type="image/png" sizes="32x32" href="TemplateData/favicon-32.png?v=202611081723">
+    <link rel="icon" type="image/png" sizes="16x16" href="TemplateData/favicon-16.png?v=202611081723">
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
@@ -406,6 +406,9 @@
             return !!(gl && gl.getExtension("WEBGL_compressed_texture_astc"));
           } catch (e) { return true; }
         })();
+        // On-demand content (ContentStream): the levels and story shots of each world come from Content/<astc|dxt>/, the same
+        // texture variant as the data file.
+        try { window.cubedContentBase = new URL("Content/" + (gpuReadsAstc ? "astc" : "dxt") + "/", location.href).href; } catch (e) {}
         const openCache = () => ("caches" in window ? caches.open("cubed-data").catch(() => null) : Promise.resolve(null));
         const loadData = () => fetch(buildUrl + "/data-parts.json", { cache: "no-store" })
           .then((response) => response.ok ? response.json() : null)
