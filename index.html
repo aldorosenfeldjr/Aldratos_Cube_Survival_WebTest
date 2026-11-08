@@ -453,7 +453,7 @@
         // texture in software at load). Parts are kept in the browser's Cache Storage per build stamp, so a second visit skips the
         // download; a gzip data file is unpacked by the browser's native DecompressionStream instead of Unity's JS fallback.
         // Without data-parts.json Unity loads the plain data file itself.
-        const gpuReadsAstc = (() => {
+        const gpuReadsAstc = /[?&]astc=1/.test(location.search) || (() => { // ?astc=1: force the phone variant (testing)
           try {
             const c = document.createElement("canvas");
             const gl = c.getContext("webgl2") || c.getContext("webgl");
