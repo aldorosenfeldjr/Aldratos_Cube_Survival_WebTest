@@ -305,7 +305,9 @@
         const relay = (e) => {
           if (!window.cubedSideways || e.cubedRelayed || e.target !== canvas) { return; }
           e.stopImmediatePropagation();
-          if (e.cancelable && e.type !== "click") { e.preventDefault(); }
+          // Only touch events are cancelled (stops scrolling / zoom); cancelling a pointerdown would also suppress the mouse events
+          // the browser derives from it, and those are what Unity reads on a desktop.
+          if (e.cancelable && e.type.startsWith("touch")) { e.preventDefault(); }
           let copy;
           if (e.type.startsWith("touch")) {
             copy = new Event(e.type, { bubbles: true, cancelable: true });
