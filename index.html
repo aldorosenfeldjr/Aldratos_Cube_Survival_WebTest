@@ -12,12 +12,12 @@
     <meta name="theme-color" content="#1b163a">
     <!-- Every device: the game fills the whole screen (no zoom, under the notch with safe-area insets handled in game). -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, minimal-ui">
-    <link rel="manifest" href="manifest.webmanifest?v=202611081723">
-    <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png?v=202611081723">
-    <link rel="icon" href="TemplateData/favicon.ico?v=202611081723" sizes="any">
-    <link rel="shortcut icon" href="TemplateData/favicon.ico?v=202611081723">
-    <link rel="icon" type="image/png" sizes="32x32" href="TemplateData/favicon-32.png?v=202611081723">
-    <link rel="icon" type="image/png" sizes="16x16" href="TemplateData/favicon-16.png?v=202611081723">
+    <link rel="manifest" href="manifest.webmanifest?v=202611081830">
+    <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png?v=202611081830">
+    <link rel="icon" href="TemplateData/favicon.ico?v=202611081830" sizes="any">
+    <link rel="shortcut icon" href="TemplateData/favicon.ico?v=202611081830">
+    <link rel="icon" type="image/png" sizes="32x32" href="TemplateData/favicon-32.png?v=202611081830">
+    <link rel="icon" type="image/png" sizes="16x16" href="TemplateData/favicon-16.png?v=202611081830">
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
@@ -36,17 +36,6 @@
           </div>
         </div>
       </div>
-      <div id="rotate-overlay" style="display:none;position:fixed;inset:0;z-index:1000;background:#1b163a;color:#fff;font-family:sans-serif;text-align:center;flex-direction:column;align-items:center;justify-content:center;">
-        <div style="width:56px;height:96px;border:5px solid #ffd45a;border-radius:12px;margin-bottom:28px;animation:cubed-rotate 1.6s ease-in-out infinite;"></div>
-        <div style="font-size:24px;font-weight:bold;">Rotate your phone</div>
-        <div style="font-size:16px;opacity:0.8;margin-top:8px;">Cubed is played sideways</div>
-      </div>
-      <div id="cubed-resume" style="display:none;position:fixed;inset:0;z-index:1001;background:#1b163a;color:#fff;font-family:sans-serif;text-align:center;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;">
-        <div style="font-size:30px;font-weight:bold;margin-bottom:12px;">Cubed</div>
-        <div id="cubed-resume-text" style="font-size:22px;padding:14px 28px;border-radius:14px;background:#ffd45a;color:#1b163a;font-weight:bold;">Tap to continue</div>
-        <div id="cubed-resume-sub" style="font-size:14px;margin-top:14px;opacity:0.8;">Your progress is saved.</div>
-      </div>
-      <style>@keyframes cubed-rotate { 0%,20% { transform: rotate(0deg); } 60%,100% { transform: rotate(-90deg); } }</style>
       <div id="unity-warning"> </div>
       <div id="cubed-fs-button" title="Full screen"></div>
       <div id="cubed-ios-hint"><span id="cubed-ios-hint-text"></span><button id="cubed-ios-hint-ok">OK</button></div>
@@ -128,6 +117,8 @@
         codeUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.wasm.unityweb",
         symbolsUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.symbols.json.unityweb",
         streamingAssetsUrl: "StreamingAssets",
+        // Unity's IndexedDB cache: build-stamped files (?v=) never change, so a second visit skips the download entirely.
+        cacheControl: function (url) { return url.indexOf("?v=") >= 0 ? "immutable" : (url.match(/\.(bundle|unity3d)$/) ? "must-revalidate" : "no-store"); },
 
         // If you have a custom web site structure, or want to place multiple Unity build instances on the same page,
         // you can pass fullscreenElementID: "my-unity-fullscreen-container-id", in this configuration field to
@@ -205,7 +196,7 @@
       const lockLandscape = () => {
         try {
           if (touch && screen.orientation && screen.orientation.lock) {
-            screen.orientation.lock("landscape").catch(() => { });
+            // No orientation lock: an upright phone shows the game sideways (see "Sideways play" below), so the player never has to rotate.
           }
         } catch (e) { }
       };
@@ -265,20 +256,78 @@
         }
       }
 
-      if (touch) {
-        // Landscape only: devices held upright see a "Rotate your phone" card (the run pauses behind it).
-        const rotateOverlay = document.querySelector("#rotate-overlay");
-        const portrait = window.matchMedia("(orientation: portrait)");
-        const showRotate = () => {
-          const upright = portrait.matches;
-          rotateOverlay.style.display = upright ? "flex" : "none";
-          if (upright && window.cubedInstance) {
-            try { window.cubedInstance.SendMessage("GameManager", "Pause"); } catch (e) { }
+      if (touch || /[?&]sideways=1/.test(location.search)) {
+        // Sideways play: the game is landscape, but nobody has to rotate the phone (many keep rotation locked). Held upright, the page
+        // draws the game turned 90 degrees clockwise, so it already plays sideways; turned to landscape, it simply goes native. The
+        // canvas keeps the same landscape size either way, so switching is seamless (no pause, no restart). Input is remapped: Unity
+        // reads touch / mouse / pointer positions against the canvas rect, so events on the turned canvas are re-sent with the
+        // coordinates the unturned canvas would have, and its rect is reported unturned.
+        const container = document.querySelector("#unity-container");
+        const realRect = HTMLCanvasElement.prototype.getBoundingClientRect;
+        const applySideways = () => {
+          const vw = window.innerWidth, vh = window.innerHeight;
+          const sideways = /[?&]sideways=1/.test(location.search) || vh > vw * 1.05; // ?sideways=1: test it on a desktop
+          window.cubedSideways = sideways;
+          if (sideways) {
+            container.style.width = vh + "px";
+            container.style.height = vw + "px";
+            container.style.transformOrigin = "0 0";
+            container.style.transform = "translateX(" + vw + "px) rotate(90deg)";
+          } else {
+            container.style.width = container.style.height = container.style.transform = container.style.transformOrigin = "";
           }
         };
-        portrait.addEventListener ? portrait.addEventListener("change", showRotate) : portrait.addListener(showRotate);
-        window.addEventListener("resize", showRotate);
-        showRotate();
+        canvas.getBoundingClientRect = function () {
+          if (!window.cubedSideways) { return realRect.call(this); }
+          const w = window.innerHeight, h = window.innerWidth;
+          return { left: 0, top: 0, x: 0, y: 0, width: w, height: h, right: w, bottom: h, toJSON() { return this; } };
+        };
+        // Screen point (x, y) -> point on the unturned canvas: u = y, v = innerWidth - x.
+        const mapX = (x, y) => y;
+        const mapY = (x, y) => window.innerWidth - x;
+        window.cubedMapPoint = (x, y) => [mapX(x, y), mapY(x, y)]; // used by the smoke check / debugging
+        const mapTouches = (list) => {
+          const out = [];
+          for (let i = 0; i < (list ? list.length : 0); i++) {
+            const t = list[i];
+            const u = mapX(t.clientX, t.clientY), v = mapY(t.clientX, t.clientY);
+            out.push({ identifier: t.identifier, clientX: u, clientY: v, pageX: u, pageY: v, screenX: u, screenY: v,
+              force: t.force, radiusX: t.radiusX, radiusY: t.radiusY, rotationAngle: t.rotationAngle, target: canvas });
+          }
+          out.item = (i) => out[i];
+          return out;
+        };
+        const relay = (e) => {
+          if (!window.cubedSideways || e.cubedRelayed || e.target !== canvas) { return; }
+          e.stopImmediatePropagation();
+          if (e.cancelable && e.type !== "click") { e.preventDefault(); }
+          let copy;
+          if (e.type.startsWith("touch")) {
+            copy = new Event(e.type, { bubbles: true, cancelable: true });
+            Object.defineProperty(copy, "touches", { value: mapTouches(e.touches) });
+            Object.defineProperty(copy, "targetTouches", { value: mapTouches(e.targetTouches) });
+            Object.defineProperty(copy, "changedTouches", { value: mapTouches(e.changedTouches) });
+          } else {
+            const u = mapX(e.clientX, e.clientY), v = mapY(e.clientX, e.clientY);
+            const init = { bubbles: true, cancelable: true, clientX: u, clientY: v, screenX: u, screenY: v, button: e.button, buttons: e.buttons,
+              ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey };
+            if (e.type.startsWith("pointer") && window.PointerEvent) {
+              copy = new PointerEvent(e.type, Object.assign(init, { pointerId: e.pointerId, pointerType: e.pointerType, isPrimary: e.isPrimary,
+                width: e.width, height: e.height, pressure: e.pressure }));
+            } else {
+              copy = new MouseEvent(e.type, init);
+            }
+          }
+          copy.cubedRelayed = true;
+          canvas.dispatchEvent(copy);
+        };
+        ["touchstart", "touchmove", "touchend", "touchcancel", "pointerdown", "pointermove", "pointerup", "pointercancel",
+          "mousedown", "mousemove", "mouseup", "click"].forEach((type) => window.addEventListener(type, relay, { capture: true, passive: false }));
+        const reflow = () => { applySideways(); fitHeight(); };
+        window.addEventListener("resize", reflow);
+        window.addEventListener("orientationchange", () => setTimeout(reflow, 120));
+        if (screen.orientation && screen.orientation.addEventListener) { screen.orientation.addEventListener("change", () => setTimeout(reflow, 120)); }
+        applySideways();
         // iOS Safari: no rubber-band scrolling or pinch zoom pulling the page around under the game.
         document.addEventListener("touchmove", (e) => { if (e.touches && e.touches.length > 1) { e.preventDefault(); } }, { passive: false });
         document.addEventListener("gesturestart", (e) => e.preventDefault());
@@ -420,6 +469,14 @@
             const manifest = (!gpuReadsAstc && all.dxt) ? all.dxt : all;
             const stamp = all.stamp || "";
             loadingContainer.style.display = "block";
+            // Parts from older builds lived in Cache Storage; a whole data file is cached by Unity itself, so drop that copy.
+            if ("caches" in window) { caches.delete("cubed-data").catch(() => {}); }
+            if (!manifest.parts) {
+              // One whole file: Unity downloads, unpacks and caches it itself (no extra copies in the page = less memory on phones).
+              config.dataUrl = buildUrl + "/" + manifest.file + "?v=" + stamp;
+              window.cubedDataBytes = manifest.bytes;
+              return 0;
+            }
             const received = new Array(manifest.parts).fill(0);
             const showProgress = () => {
               const done = received.reduce((a, b) => a + b, 0);
@@ -482,6 +539,9 @@
             const f = start + (0.88 - start) * (progress / 0.9);
             if (start > 0) {
               if (!stageTimer) { cubedStage(W.unpack, f, 0.88); }
+            } else if (window.cubedDataBytes) {
+              const got = window.cubedDataBytes * Math.min(1, progress / 0.9);
+              cubedProgress(0.85 * progress / 0.9, W.dl + " " + mb(got) + " / " + mb(window.cubedDataBytes) + " MB");
             } else {
               cubedProgress(f);
             }
