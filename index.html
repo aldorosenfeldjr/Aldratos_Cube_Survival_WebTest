@@ -12,12 +12,12 @@
     <meta name="theme-color" content="#1b163a">
     <!-- Every device: the game fills the whole screen (no zoom, under the notch with safe-area insets handled in game). -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, minimal-ui">
-    <link rel="manifest" href="manifest.webmanifest?v=202611081918">
-    <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png?v=202611081918">
-    <link rel="icon" href="TemplateData/favicon.ico?v=202611081918" sizes="any">
-    <link rel="shortcut icon" href="TemplateData/favicon.ico?v=202611081918">
-    <link rel="icon" type="image/png" sizes="32x32" href="TemplateData/favicon-32.png?v=202611081918">
-    <link rel="icon" type="image/png" sizes="16x16" href="TemplateData/favicon-16.png?v=202611081918">
+    <link rel="manifest" href="manifest.webmanifest?v=202611090053">
+    <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png?v=202611090053">
+    <link rel="icon" href="TemplateData/favicon.ico?v=202611090053" sizes="any">
+    <link rel="shortcut icon" href="TemplateData/favicon.ico?v=202611090053">
+    <link rel="icon" type="image/png" sizes="32x32" href="TemplateData/favicon-32.png?v=202611090053">
+    <link rel="icon" type="image/png" sizes="16x16" href="TemplateData/favicon-16.png?v=202611090053">
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
@@ -50,6 +50,7 @@
       </div>
     </div>
     <script>
+      window.cubedT = { pageStart: 0, scriptAt: Math.round(performance.now()) }; // Metrics: the load timeline (ms since navigation)
       // Sound is simply on: no prompt. Every audio context the game opens is remembered and resumed right away (browsers that
       // allow autoplay for this site start it at once) and again on the very first input of any kind - click, tap, key or
       // wheel - since some browsers only let a page make sound after the player has interacted with it.
@@ -553,15 +554,16 @@
               cubedProgress(f);
             }
           } else if (progress < 1) {
-            if (!window.cubedEngineStage) { window.cubedEngineStage = true; cubedStage(W.engine, Math.max(shown, 0.88), 0.95); }
+            if (!window.cubedEngineStage) { window.cubedEngineStage = true; window.cubedT = window.cubedT || {}; window.cubedT.dataDone = Math.round(performance.now()); cubedStage(W.engine, Math.max(shown, 0.88), 0.95); }
           }
         })).then((unityInstance) => {
                 window.cubedInstance = unityInstance;
+                window.cubedT = window.cubedT || {}; window.cubedT.engineUp = Math.round(performance.now());
                 // The engine is up; the loader stays until the game's first heartbeat (the main menu is running), 8 s at most.
                 cubedStage(W.world, Math.max(shown, 0.95), 0.995);
                 const t0 = window.cubedHeartbeat || 0;
                 const waitReady = setInterval(() => {
-                  if ((window.cubedHeartbeat || 0) !== t0) { clearInterval(waitReady); cubedHideLoader(); }
+                  if ((window.cubedHeartbeat || 0) !== t0) { clearInterval(waitReady); window.cubedT.firstHeartbeat = Math.round(performance.now()); cubedHideLoader(); }
                 }, 100);
                 setTimeout(() => { clearInterval(waitReady); cubedHideLoader(); }, 8000);
 
