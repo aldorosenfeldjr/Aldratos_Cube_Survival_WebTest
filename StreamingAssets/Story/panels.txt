@@ -2,6 +2,7 @@ companions_1 c
 companions_2 c
 companions_3 c
 ending b c
+ending_egg b
 event_christmas_1 c
 event_christmas_2 b
 event_christmas_3 c
