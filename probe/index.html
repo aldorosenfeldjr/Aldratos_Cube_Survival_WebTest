@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Cubed</title>
+    <!-- iOS: lets "Add to Home Screen" launch with no Safari chrome (address bar, tab bar) at all. -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Cubed">
+    <meta name="theme-color" content="#1b163a">
+    <!-- Every device: the game fills the whole screen (no zoom, under the notch with safe-area insets handled in game). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, minimal-ui">
+    <link rel="manifest" href="manifest.webmanifest?v=202611090731">
+    <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png?v=202611090731">
+    <link rel="icon" href="TemplateData/favicon.ico?v=202611090731" sizes="any">
+    <link rel="shortcut icon" href="TemplateData/favicon.ico?v=202611090731">
+    <link rel="icon" type="image/png" sizes="32x32" href="TemplateData/favicon-32.png?v=202611090731">
+    <link rel="icon" type="image/png" sizes="16x16" href="TemplateData/favicon-16.png?v=202611090731">
+    <link rel="stylesheet" href="TemplateData/style.css">
+  </head>
+  <body>
+    <div id="unity-container">
+      <div id="unity-fullscreen-container">
+        <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
+        <div id="unity-loading-container">
+          <div id="unity-loading-bar">
+            <div id="cubed-logo"></div>
+            <div id="cubed-title">CUBED</div>
+            <div id="unity-progress-bar-empty">
+              <div id="unity-progress-bar-full"></div>
+            </div>
+            <div id="cubed-percent">0%</div>
+            <div id="cubed-tip"></div>
+          </div>
+        </div>
+      </div>
+      <div id="cubed-resume" style="display:none;position:fixed;inset:0;z-index:1001;background:#1b163a;color:#fff;font-family:sans-serif;text-align:center;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;">
+        <div style="font-size:30px;font-weight:bold;margin-bottom:12px;">Cubed</div>
+        <div id="cubed-resume-text" style="font-size:22px;padding:14px 28px;border-radius:14px;background:#ffd45a;color:#1b163a;font-weight:bold;">Tap to continue</div>
+        <div id="cubed-resume-sub" style="font-size:14px;margin-top:14px;opacity:0.8;">Your progress is saved.</div>
+      </div>
+      <div id="unity-warning"> </div>
+      <div id="cubed-fs-button" title="Full screen"></div>
+      <div id="cubed-ios-hint"><span id="cubed-ios-hint-text"></span><button id="cubed-ios-hint-ok">OK</button></div>
+      <!-- Kept hidden: development builds hang their profiler buttons on the build title. -->
+      <div id="unity-footer" style="display:none">
+        <div id="unity-build-title">Cubed</div>
+      </div>
+    </div>
+    <script>
+      window.cubedT = { pageStart: 0, scriptAt: Math.round(performance.now()) }; // Metrics: the load timeline (ms since navigation)
+      // Sound is simply on: no prompt. Every audio context the game opens is remembered and resumed right away (browsers that
+      // allow autoplay for this site start it at once) and again on the very first input of any kind - click, tap, key or
+      // wheel - since some browsers only let a page make sound after the player has interacted with it.
+      (function () {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) { return; }
+        const contexts = [];
+        const Wrapped = function () {
+          const ctx = new (Function.prototype.bind.apply(Ctx, [null].concat(Array.prototype.slice.call(arguments))))();
+          contexts.push(ctx);
+          try { ctx.resume().catch(() => { }); } catch (e) { }
+          return ctx;
+        };
+        Wrapped.prototype = Ctx.prototype;
+        window.AudioContext = Wrapped;
+        if (window.webkitAudioContext) { window.webkitAudioContext = Wrapped; }
+        const resumeAll = () => {
+          contexts.forEach((ctx) => { try { if (ctx.state !== "running") { ctx.resume().catch(() => { }); } } catch (e) { } });
+        };
+        ["pointerdown", "pointerup", "touchstart", "touchend", "keydown", "mousedown", "wheel"].forEach((type) =>
+          window.addEventListener(type, resumeAll, { capture: true, passive: true }));
+        document.addEventListener("visibilitychange", () => { if (!document.hidden) { resumeAll(); } });
+        // A gamepad (PS5 / Xbox, also through Sunshine/Moonlight): retry the sound on its first presses too. Browsers may only
+        // count a click or key as permission for sound, so this is a best effort; any click or key starts it for sure.
+        window.addEventListener("gamepadconnected", resumeAll);
+        let padTries = 0;
+        const padPoll = () => {
+          try {
+            const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+            for (const p of pads) { if (p && p.buttons && p.buttons.some((b) => b.pressed)) { resumeAll(); padTries++; break; } }
+          } catch (e) { }
+          if (padTries < 20) { setTimeout(padPoll, 250); }
+        };
+        padPoll();
+      })();
+      let canvas = document.querySelector("#unity-canvas");
+      let fullscreenContainer = document.querySelector("#unity-fullscreen-container");
+
+      // Shows a temporary message banner/ribbon for a few seconds, or
+      // a permanent error message on top of the canvas if type=='error'.
+      // If type=='warning', a yellow highlight color is used.
+      // Modify or remove this function to customize the visually presented
+      // way that non-critical warnings and error messages are presented to the
+      // user.
+      function unityShowBanner(msg, type) {
+        var warningBanner = document.querySelector("#unity-warning");
+        function updateBannerVisibility() {
+          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+        }
+        var div = document.createElement('div');
+        div.innerHTML = msg;
+        warningBanner.appendChild(div);
+        if (type == 'error') div.style = 'background: red; padding: 10px;';
+        else {
+          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
+          setTimeout(function() {
+            warningBanner.removeChild(div);
+            updateBannerVisibility();
+          }, 5000);
+        }
+        updateBannerVisibility();
+      }
+
+      var buildUrl = "Build";
+      var loaderUrl = buildUrl + "/Aldratos_Cube_Survival_WebTest.loader.js";
+      var config = {
+        arguments: [],
+        dataUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.data.unityweb",
+        frameworkUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.framework.js.unityweb",
+        codeUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.wasm.unityweb",
+        symbolsUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.symbols.json.unityweb",
+        streamingAssetsUrl: "StreamingAssets",
+        // Unity's IndexedDB cache: build-stamped files (?v=) never change, so a second visit skips the download entirely.
+        cacheControl: function (url) { return url.indexOf("?v=") >= 0 ? "immutable" : (url.match(/\.(bundle|unity3d)$/) ? "must-revalidate" : "no-store"); },
+
+        // If you have a custom web site structure, or want to place multiple Unity build instances on the same page,
+        // you can pass fullscreenElementID: "my-unity-fullscreen-container-id", in this configuration field to
+        // explicitly point to the element tree root that is displayed in fullscreen mode.
+        fullscreenElementID: "unity-fullscreen-container",
+
+        companyName: "Alexandre Rosenfeld",
+        productName: "Cubed",
+        productVersion: "0.9.0",
+        showBanner: unityShowBanner,
+        // errorHandler: function(err, url, line) {
+        //    alert("error " + err + " occurred at line " + line);
+        //    // Return 'true' if you handled this error and don't want Unity
+        //    // to process it further, 'false' otherwise.
+        //    return true;
+        // },
+      };
+
+      // By default, Unity keeps WebGL canvas render target size matched with
+      // the DOM size of the canvas element (scaled by window.devicePixelRatio)
+      // Set this to false if you want to decouple this synchronization from
+      // happening inside the engine, and you would instead like to size up
+      // the canvas DOM size and WebGL render target sizes yourself.
+      // config.matchWebGLToCanvasSize = false;
+
+      // If you would like all file writes inside Unity Application.persistentDataPath
+      // directory to automatically persist so that the contents are remembered when
+      // the user revisits the site the next time, uncomment the following line:
+      // config.autoSyncPersistentDataPath = true;
+      // This autosyncing is currently not the default behavior to avoid regressing
+      // existing user projects that might rely on the earlier manual
+      // JS_FileSystem_Sync() behavior, but in future Unity version, this will be
+      // expected to change.
+
+      // Device class. iPadOS Safari reports a Mac desktop user agent, so touch is detected from the hardware (maxTouchPoints /
+      // coarse pointer), not only from the user agent.
+      const ua = navigator.userAgent || "";
+      const touch = (navigator.maxTouchPoints || 0) > 1 || window.matchMedia("(pointer: coarse)").matches || /iPhone|iPad|iPod|Android/i.test(ua);
+      const iOS = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && (navigator.maxTouchPoints || 0) > 1);
+      const shortSide = Math.min(screen.width || window.innerWidth, screen.height || window.innerHeight);
+      const tablet = touch && shortSide >= 600;
+      const standalone = window.matchMedia("(display-mode: fullscreen)").matches || window.matchMedia("(display-mode: standalone)").matches
+        || window.navigator.standalone === true;
+      window.cubedDevice = { touch: touch, iOS: iOS, tablet: tablet, standalone: standalone };
+      document.querySelector("#unity-container").className = touch ? "unity-mobile" : "unity-desktop";
+      canvas.className = touch ? "unity-mobile" : "unity-desktop";
+
+      // iOS home-screen app with a translucent status bar: CSS 100vh/100dvh comes out one status bar short, which left a black band
+      // at the bottom. The game box takes the real window height from JS instead (the whole screen in a home-screen app).
+      const fitHeight = () => {
+        let h = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
+        if (iOS && standalone && screen.width && screen.height) {
+          const landscape = (window.innerWidth || 0) > (window.innerHeight || 0);
+          h = Math.max(h, landscape ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height));
+        }
+        if (h > 0) document.documentElement.style.setProperty("--cubed-h", h + "px");
+      };
+      fitHeight();
+      window.addEventListener("resize", fitHeight);
+      window.addEventListener("orientationchange", () => setTimeout(fitHeight, 250));
+
+      // Performance: the canvas is drawn at a capped pixel ratio. Phones report 3x (an iPhone would be ~3 million pixels a frame);
+      // tablets have big screens, so they get less (1.5x); 2x on phones and desktops is visually the same at play distance.
+      // The game can lower its own render scale further when the frame rate drops (AdaptiveResolution).
+      config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, tablet ? 1.5 : 2);
+
+      // Real fullscreen where the browser allows it (Android, desktop): on touch devices the first tap asks for it (and on phones locks the
+      // screen sideways); a small corner button toggles it. iOS/iPadOS Safari cannot fullscreen a page: "Add to Home Screen"
+      // starts the game from the icon with no browser bars (manifest + apple-mobile-web-app-capable), and a one-time hint says so.
+      const root = document.documentElement;
+      const fsRequest = root.requestFullscreen || root.webkitRequestFullscreen;
+      const fsExit = document.exitFullscreen || document.webkitExitFullscreen;
+      const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+      const canFullscreen = !!fsRequest && !iOS && !standalone;
+      const lockLandscape = () => {
+        try {
+          if (touch && screen.orientation && screen.orientation.lock) {
+            // No orientation lock: an upright phone shows the game sideways (see "Sideways play" below), so the player never has to rotate.
+          }
+        } catch (e) { }
+      };
+      const enterFullscreen = () => {
+        if (!canFullscreen || fsElement()) {
+          return;
+        }
+        try {
+          Promise.resolve(fsRequest.call(root, { navigationUI: "hide" })).then(lockLandscape).catch(() => { });
+        } catch (e) { }
+      };
+      const fsButton = document.querySelector("#cubed-fs-button");
+      let fadeTimer = 0;
+      const showFsButton = () => {
+        if (!canFullscreen || fsElement()) {
+          fsButton.style.display = "none";
+          return;
+        }
+        fsButton.style.display = "block";
+        fsButton.classList.remove("faded");
+        clearTimeout(fadeTimer);
+        fadeTimer = setTimeout(() => fsButton.classList.add("faded"), 4000);
+      };
+      fsButton.addEventListener("click", (e) => { e.stopPropagation(); fsElement() ? (fsExit && fsExit.call(document)) : enterFullscreen(); });
+      document.addEventListener("fullscreenchange", showFsButton);
+      document.addEventListener("webkitfullscreenchange", showFsButton);
+      if (!touch) {
+        window.addEventListener("mousemove", showFsButton, { passive: true });
+      }
+      if (canFullscreen) {
+        // Touch devices go fullscreen on the first tap (browsers only allow it from a user gesture). Desktops stay in the
+        // browser window as opened; the corner button is how a PC player goes fullscreen.
+        if (touch) {
+          document.addEventListener("pointerup", enterFullscreen, { once: true });
+        }
+        showFsButton();
+      }
+
+      // iOS / iPadOS in Safari (not already launched from the home screen): a friendly one-time hint.
+      if (iOS && !standalone) {
+        let hinted = false;
+        try { hinted = localStorage.getItem("cubed.a2hsHint") === "1"; } catch (e) { }
+        if (!hinted) {
+          const langHint = (navigator.language || "en").toLowerCase();
+          const hintText = langHint.startsWith("pt") ? "Para tela cheia: toque em <b>Compartilhar</b> e em <b>Adicionar à Tela de Início</b>."
+            : langHint.startsWith("es") ? "Para pantalla completa: toca <b>Compartir</b> y <b>Añadir a pantalla de inicio</b>."
+            : "For full screen: tap <b>Share</b>, then <b>Add to Home Screen</b>.";
+          const hint = document.querySelector("#cubed-ios-hint");
+          document.querySelector("#cubed-ios-hint-text").innerHTML = hintText;
+          const closeHint = () => {
+            hint.style.display = "none";
+            try { localStorage.setItem("cubed.a2hsHint", "1"); } catch (e) { }
+          };
+          document.querySelector("#cubed-ios-hint-ok").addEventListener("click", (e) => { e.stopPropagation(); closeHint(); });
+          setTimeout(() => { hint.style.display = "flex"; }, 1500);
+          setTimeout(() => { hint.style.display = "none"; }, 20000); // hides itself, but comes back next visit until OK is tapped
+        }
+      }
+
+      if (touch || /[?&]sideways=1/.test(location.search)) {
+        // Sideways play: the game is landscape, but nobody has to rotate the phone (many keep rotation locked). Held upright, the page
+        // draws the game turned 90 degrees clockwise, so it already plays sideways; turned to landscape, it simply goes native. The
+        // canvas keeps the same landscape size either way, so switching is seamless (no pause, no restart). Input is remapped: Unity
+        // reads touch / mouse / pointer positions against the canvas rect, so events on the turned canvas are re-sent with the
+        // coordinates the unturned canvas would have, and its rect is reported unturned.
+        const container = document.querySelector("#unity-container");
+        const realRect = HTMLCanvasElement.prototype.getBoundingClientRect;
+        const applySideways = () => {
+          const vw = window.innerWidth, vh = window.innerHeight;
+          const sideways = /[?&]sideways=1/.test(location.search) || vh > vw * 1.05; // ?sideways=1: test it on a desktop
+          window.cubedSideways = sideways;
+          if (sideways) {
+            container.style.width = vh + "px";
+            container.style.height = vw + "px";
+            container.style.transformOrigin = "0 0";
+            container.style.transform = "translateX(" + vw + "px) rotate(90deg)";
+          } else {
+            container.style.width = container.style.height = container.style.transform = container.style.transformOrigin = "";
+          }
+        };
+        canvas.getBoundingClientRect = function () {
+          if (!window.cubedSideways) { return realRect.call(this); }
+          const w = window.innerHeight, h = window.innerWidth;
+          return { left: 0, top: 0, x: 0, y: 0, width: w, height: h, right: w, bottom: h, toJSON() { return this; } };
+        };
+        // Screen point (x, y) -> point on the unturned canvas: u = y, v = innerWidth - x.
+        const mapX = (x, y) => y;
+        const mapY = (x, y) => window.innerWidth - x;
+        window.cubedMapPoint = (x, y) => [mapX(x, y), mapY(x, y)]; // used by the smoke check / debugging
+        const mapTouches = (list) => {
+          const out = [];
+          for (let i = 0; i < (list ? list.length : 0); i++) {
+            const t = list[i];
+            const u = mapX(t.clientX, t.clientY), v = mapY(t.clientX, t.clientY);
+            out.push({ identifier: t.identifier, clientX: u, clientY: v, pageX: u, pageY: v, screenX: u, screenY: v,
+              force: t.force, radiusX: t.radiusX, radiusY: t.radiusY, rotationAngle: t.rotationAngle, target: canvas });
+          }
+          out.item = (i) => out[i];
+          return out;
+        };
+        const relay = (e) => {
+          if (!window.cubedSideways || e.cubedRelayed || e.target !== canvas) { return; }
+          e.stopImmediatePropagation();
+          // Only touch events are cancelled (stops scrolling / zoom); cancelling a pointerdown would also suppress the mouse events
+          // the browser derives from it, and those are what Unity reads on a desktop.
+          if (e.cancelable && e.type.startsWith("touch")) { e.preventDefault(); }
+          let copy;
+          if (e.type.startsWith("touch")) {
+            copy = new Event(e.type, { bubbles: true, cancelable: true });
+            Object.defineProperty(copy, "touches", { value: mapTouches(e.touches) });
+            Object.defineProperty(copy, "targetTouches", { value: mapTouches(e.targetTouches) });
+            Object.defineProperty(copy, "changedTouches", { value: mapTouches(e.changedTouches) });
+          } else {
+            const u = mapX(e.clientX, e.clientY), v = mapY(e.clientX, e.clientY);
+            const init = { bubbles: true, cancelable: true, clientX: u, clientY: v, screenX: u, screenY: v, button: e.button, buttons: e.buttons,
+              ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey };
+            if (e.type.startsWith("pointer") && window.PointerEvent) {
+              copy = new PointerEvent(e.type, Object.assign(init, { pointerId: e.pointerId, pointerType: e.pointerType, isPrimary: e.isPrimary,
+                width: e.width, height: e.height, pressure: e.pressure }));
+            } else {
+              copy = new MouseEvent(e.type, init);
+            }
+          }
+          copy.cubedRelayed = true;
+          canvas.dispatchEvent(copy);
+        };
+        ["touchstart", "touchmove", "touchend", "touchcancel", "pointerdown", "pointermove", "pointerup", "pointercancel",
+          "mousedown", "mousemove", "mouseup", "click"].forEach((type) => window.addEventListener(type, relay, { capture: true, passive: false }));
+        const reflow = () => { applySideways(); fitHeight(); };
+        window.addEventListener("resize", reflow);
+        window.addEventListener("orientationchange", () => setTimeout(reflow, 120));
+        if (screen.orientation && screen.orientation.addEventListener) { screen.orientation.addEventListener("change", () => setTimeout(reflow, 120)); }
+        applySideways();
+        // iOS Safari: no rubber-band scrolling or pinch zoom pulling the page around under the game.
+        document.addEventListener("touchmove", (e) => { if (e.touches && e.touches.length > 1) { e.preventDefault(); } }, { passive: false });
+        document.addEventListener("gesturestart", (e) => e.preventDefault());
+      }
+
+
+
+      // Coming back to the tab: if the browser dropped the game's WebGL context (common on phones after switching apps) or the game
+      // stopped drawing, a "Tap to continue" card reloads the page instead of leaving a frozen screen. Progress is in the save.
+      const lang = (navigator.language || "en").toLowerCase();
+      const words = lang.startsWith("pt") ? ["Toque para continuar", "Seu progresso está salvo.", "Não foi possível carregar. Toque para tentar de novo."]
+        : lang.startsWith("es") ? ["Toca para continuar", "Tu progreso está guardado.", "No se pudo cargar. Toca para reintentar."]
+        : ["Tap to continue", "Your progress is saved.", "Couldn't load the game. Tap to try again."];
+      const resumeCard = document.querySelector("#cubed-resume");
+      const showResume = (failed) => {
+        document.querySelector("#cubed-resume-text").textContent = failed ? words[2] : words[0];
+        document.querySelector("#cubed-resume-sub").textContent = failed ? "" : words[1];
+        resumeCard.style.display = "flex";
+        window.cubedResumeShown = failed ? "failed" : "lost";
+      };
+      resumeCard.addEventListener("click", () => location.reload());
+      canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); showResume(false); }, false);
+      const send = (method) => { try { window.cubedInstance && window.cubedInstance.SendMessage("WebLifecycle", method); } catch (e) { } };
+      const checkAlive = () => {
+        if (!window.cubedInstance || resumeCard.style.display === "flex") {
+          return;
+        }
+        let lost = false;
+        try {
+          const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+          lost = !gl || gl.isContextLost();
+        } catch (e) { lost = true; }
+        const stale = performance.now() - (window.cubedHeartbeat || 0) > 2500;
+        if (lost || stale) {
+          showResume(false);
+        }
+      };
+      window.cubedCheckAlive = checkAlive;
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          send("OnHidden");
+        } else {
+          send("OnVisible");
+          setTimeout(checkAlive, 3000);
+        }
+      });
+      window.addEventListener("pagehide", () => send("OnHidden"));
+      window.addEventListener("pageshow", (e) => { if (e.persisted) { setTimeout(checkAlive, 3000); } });
+
+      var script = document.createElement("script");
+      script.src = loaderUrl;
+      script.onerror = () => showResume(true);
+      script.onload = () => {
+        const loadingContainer = document.querySelector("#unity-loading-container");
+        const progressBarFull = document.querySelector("#unity-progress-bar-full");
+
+        // Branded loading screen: bar + percent + a rotating tip in the browser's language; it fades into the game.
+        const cubedPercent = document.querySelector("#cubed-percent");
+        // Honest loading: the bar follows the real bytes of the game data (0-80%), with "64 / 156 MB" under it; after that
+        // each stage is named ("Unpacking...", "Starting the engine...", "Building the world...") and the bar keeps easing
+        // toward the stage's end, with the seconds spent in it, so it never sits still on a number.
+        const L = (navigator.language || "en").slice(0, 2);
+        const W = {
+          pt: { dl: "Baixando", unpack: "Descompactando…", engine: "Preparando o motor…", world: "Montando o mundo…" },
+          es: { dl: "Descargando", unpack: "Descomprimiendo…", engine: "Preparando el motor…", world: "Construyendo el mundo…" },
+        }[L] || { dl: "Downloading", unpack: "Unpacking…", engine: "Starting the engine…", world: "Building the world…" };
+        let shown = 0;
+        const setBar = (f) => {
+          shown = Math.max(shown, Math.min(1, f));
+          progressBarFull.style.width = (shown * 100).toFixed(1) + "%";
+        };
+        const mb = (b) => (b / 1048576).toFixed(0);
+        const cubedProgress = (f, label) => {
+          setBar(f);
+          cubedPercent.textContent = label != null ? label : Math.round(shown * 100) + "%";
+        };
+        let stageTimer = null;
+        const cubedStage = (label, from, to) => {
+          clearInterval(stageTimer);
+          const t0 = performance.now();
+          setBar(from);
+          const tick = () => {
+            const sec = (performance.now() - t0) / 1000;
+            setBar(from + (to - from) * (1 - Math.exp(-sec / 6)));
+            cubedPercent.textContent = sec >= 2 ? label + " " + Math.floor(sec) + " s" : label;
+          };
+          tick();
+          stageTimer = setInterval(tick, 250);
+        };
+        const cubedHideLoader = () => {
+          if (loadingContainer.classList.contains("gone")) {
+            return;
+          }
+          clearInterval(stageTimer);
+          setBar(1);
+          loadingContainer.classList.add("gone");
+          setTimeout(() => { loadingContainer.style.display = "none"; }, 600);
+          clearInterval(window.cubedTipTimer);
+        };
+        const lang = (navigator.language || "en").slice(0, 2);
+        const tips = {
+          en: ["Dodge the falling crates!", "Grab power-ups for a boost", "Swipe up to jump (once you learn it)", "Crates that break on the floor pay coins", "Find the story pages in every world", "Your companion levels up as you play"],
+          pt: ["Desvie das caixas que caem!", "Pegue power-ups para um empurrão", "Deslize para cima para pular (quando aprender)", "Caixas que quebram no chão dão moedas", "Ache as páginas da história em cada mundo", "Seu companheiro sobe de nível enquanto você joga"],
+          es: ["¡Esquiva las cajas que caen!", "Agarra power-ups para un empujón", "Desliza hacia arriba para saltar (cuando lo aprendas)", "Las cajas que se rompen en el suelo dan monedas", "Encuentra las páginas de la historia en cada mundo", "Tu compañero sube de nivel mientras juegas"],
+        }[lang] || null;
+        const tipList = tips || ["Dodge the falling crates!", "Grab power-ups for a boost", "Crates that break on the floor pay coins"];
+        const tipEl = document.querySelector("#cubed-tip");
+        let tipIndex = Math.floor(Math.random() * tipList.length);
+        const nextTip = () => {
+          tipEl.classList.remove("show");
+          setTimeout(() => { tipEl.textContent = tipList[tipIndex++ % tipList.length]; tipEl.classList.add("show"); }, 300);
+        };
+        nextTip();
+        window.cubedTipTimer = setInterval(nextTip, 3500);
+
+        // The data file comes in parts (GitHub refuses files over 100 MB; see WebTestBuild.SplitDataFile). data-parts.json names
+        // two variants: the ASTC textures (phones) and "dxt" (desktop / TV GPUs, which cannot read ASTC: Unity would unpack every
+        // texture in software at load). Parts are kept in the browser's Cache Storage per build stamp, so a second visit skips the
+        // download; a gzip data file is unpacked by the browser's native DecompressionStream instead of Unity's JS fallback.
+        // Without data-parts.json Unity loads the plain data file itself.
+        const gpuReadsAstc = /[?&]astc=1/.test(location.search) || (() => { // ?astc=1: force the phone variant (testing)
+          try {
+            const c = document.createElement("canvas");
+            const gl = c.getContext("webgl2") || c.getContext("webgl");
+            return !!(gl && gl.getExtension("WEBGL_compressed_texture_astc"));
+          } catch (e) { return true; }
+        })();
+        // On-demand content (ContentStream): the levels and story shots of each world come from Content/<astc|dxt>/, the same
+        // texture variant as the data file.
+        try { window.cubedContentBase = new URL("Content/" + (gpuReadsAstc ? "astc" : "dxt") + "/", location.href).href; } catch (e) {}
+        const openCache = () => ("caches" in window ? caches.open("cubed-data").catch(() => null) : Promise.resolve(null));
+        const loadData = () => fetch(buildUrl + "/data-parts.json", { cache: "no-store" })
+          .then((response) => response.ok ? response.json() : null)
+          .catch(() => null)
+          .then((all) => {
+            if (!all) {
+              return 0;
+            }
+            const manifest = (!gpuReadsAstc && all.dxt) ? all.dxt : all;
+            const stamp = all.stamp || "";
+            loadingContainer.style.display = "block";
+            // Parts from older builds lived in Cache Storage; a whole data file is cached by Unity itself, so drop that copy.
+            if ("caches" in window) { caches.delete("cubed-data").catch(() => {}); }
+            if (!manifest.parts) {
+              // One whole file: Unity downloads, unpacks and caches it itself (no extra copies in the page = less memory on phones).
+              config.dataUrl = buildUrl + "/" + manifest.file + "?v=" + stamp;
+              window.cubedDataBytes = manifest.bytes;
+              return 0;
+            }
+            const received = new Array(manifest.parts).fill(0);
+            const showProgress = () => {
+              const done = received.reduce((a, b) => a + b, 0);
+              cubedProgress(0.8 * done / manifest.bytes, W.dl + " " + mb(done) + " / " + mb(manifest.bytes) + " MB");
+            };
+            return openCache().then((cache) => {
+              if (cache) {
+                // Drop parts of older builds so the cache never grows past one build.
+                cache.keys().then((keys) => keys.forEach((k) => { if (k.url.indexOf("v=" + stamp) < 0) { cache.delete(k); } })).catch(() => {});
+              }
+              const part = (i) => {
+                const url = buildUrl + "/" + manifest.file + ".part" + i + "?v=" + stamp;
+                const download = () => fetch(url).then((response) => {
+                  const reader = response.body.getReader();
+                  const chunks = [];
+                  const pump = () => reader.read().then(({ done, value }) => {
+                    if (done) {
+                      const blob = new Blob(chunks);
+                      if (cache) { cache.put(url, new Response(blob)).catch(() => {}); }
+                      return blob;
+                    }
+                    chunks.push(value);
+                    received[i] += value.length;
+                    showProgress();
+                    return pump();
+                  });
+                  return pump();
+                });
+                if (!cache) {
+                  return download();
+                }
+                return cache.match(url).then((hit) => hit ? hit.blob().then((blob) => { received[i] = blob.size; showProgress(); return blob; }) : download())
+                  .catch(() => download());
+              };
+              const parts = [];
+              for (let i = 0; i < manifest.parts; i++) {
+                parts.push(part(i));
+              }
+              return Promise.all(parts);
+            }).then((blobs) => {
+              const joined = new Blob(blobs);
+              if (all.gzip && "DecompressionStream" in window) {
+                cubedStage(W.unpack, 0.8, 0.86);
+                return new Response(joined.stream().pipeThrough(new DecompressionStream("gzip"))).blob()
+                  .then((raw) => { clearInterval(stageTimer); stageTimer = null; config.dataUrl = URL.createObjectURL(raw); return 0.86; })
+                  .catch(() => { clearInterval(stageTimer); stageTimer = null; config.dataUrl = URL.createObjectURL(joined); return 0.8; });
+              }
+              config.dataUrl = URL.createObjectURL(joined);
+              return 0.8;
+            });
+          });
+
+        loadData().then((start) => createUnityInstance(canvas, config, (progress) => {
+          if (window.cubedInstance) {
+            return; // late progress reports (after the game is up) must not bring the loading bar back over it
+          }
+          // Unity reports its own downloads up to 0.9, then sits at 0.9 while it unpacks the data and compiles the engine.
+          loadingContainer.style.display = "block";
+          if (progress < 0.9) {
+            const f = start + (0.88 - start) * (progress / 0.9);
+            if (start > 0) {
+              if (!stageTimer) { cubedStage(W.unpack, f, 0.88); }
+            } else if (window.cubedDataBytes) {
+              const got = window.cubedDataBytes * Math.min(1, progress / 0.9);
+              cubedProgress(0.85 * progress / 0.9, W.dl + " " + mb(got) + " / " + mb(window.cubedDataBytes) + " MB");
+            } else {
+              cubedProgress(f);
+            }
+          } else if (progress < 1) {
+            if (!window.cubedEngineStage) { window.cubedEngineStage = true; window.cubedT = window.cubedT || {}; window.cubedT.dataDone = Math.round(performance.now()); cubedStage(W.engine, Math.max(shown, 0.88), 0.95); }
+          }
+        })).then((unityInstance) => {
+                window.cubedInstance = unityInstance;
+                window.cubedT = window.cubedT || {}; window.cubedT.engineUp = Math.round(performance.now());
+                // The engine is up; the loader stays until the game's first heartbeat (the main menu is running), 8 s at most.
+                cubedStage(W.world, Math.max(shown, 0.95), 0.995);
+                const t0 = window.cubedHeartbeat || 0;
+                const waitReady = setInterval(() => {
+                  if ((window.cubedHeartbeat || 0) !== t0) { clearInterval(waitReady); window.cubedT.firstHeartbeat = Math.round(performance.now()); cubedHideLoader(); }
+                }, 100);
+                setTimeout(() => { clearInterval(waitReady); cubedHideLoader(); }, 8000);
+
+              }).catch((message) => {
+                console.error(message);
+                showResume(true);
+              });
+            };
+
+      document.body.appendChild(script);
+
+    </script>
+  </body>
+</html>
