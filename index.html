@@ -12,12 +12,12 @@
     <meta name="theme-color" content="#1b163a">
     <!-- Every device: the game fills the whole screen (no zoom, under the notch with safe-area insets handled in game). -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, minimal-ui">
-    <link rel="manifest" href="manifest.webmanifest?v=202611092219">
-    <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png?v=202611092219">
-    <link rel="icon" href="TemplateData/favicon.ico?v=202611092219" sizes="any">
-    <link rel="shortcut icon" href="TemplateData/favicon.ico?v=202611092219">
-    <link rel="icon" type="image/png" sizes="32x32" href="TemplateData/favicon-32.png?v=202611092219">
-    <link rel="icon" type="image/png" sizes="16x16" href="TemplateData/favicon-16.png?v=202611092219">
+    <link rel="manifest" href="manifest.webmanifest?v=202611100031">
+    <link rel="apple-touch-icon" href="TemplateData/apple-touch-icon.png?v=202611100031">
+    <link rel="icon" href="TemplateData/favicon.ico?v=202611100031" sizes="any">
+    <link rel="shortcut icon" href="TemplateData/favicon.ico?v=202611100031">
+    <link rel="icon" type="image/png" sizes="32x32" href="TemplateData/favicon-32.png?v=202611100031">
+    <link rel="icon" type="image/png" sizes="16x16" href="TemplateData/favicon-16.png?v=202611100031">
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
@@ -115,13 +115,13 @@
       }
 
       var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/Aldratos_Cube_Survival_WebTest.loader.js?v=202611092219";
+      var loaderUrl = buildUrl + "/Aldratos_Cube_Survival_WebTest.loader.js?v=202611100031";
       var config = {
         arguments: [],
-        dataUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.data.unityweb?v=202611092219",
-        frameworkUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.framework.js.unityweb?v=202611092219",
-        codeUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.wasm.unityweb?v=202611092219",
-        symbolsUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.symbols.json.unityweb?v=202611092219",
+        dataUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.data.unityweb?v=202611100031",
+        frameworkUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.framework.js.unityweb?v=202611100031",
+        codeUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.wasm.unityweb?v=202611100031",
+        symbolsUrl: buildUrl + "/Aldratos_Cube_Survival_WebTest.symbols.json.unityweb?v=202611100031",
         streamingAssetsUrl: "StreamingAssets",
         // Unity's IndexedDB cache: build-stamped files (?v=) never change, so a second visit skips the download entirely.
         cacheControl: function (url) { return url.indexOf("?v=") >= 0 ? "immutable" : (url.match(/\.(bundle|unity3d)$/) ? "must-revalidate" : "no-store"); },
@@ -385,7 +385,7 @@
       window.addEventListener("pagehide", () => send("OnHidden"));
       window.addEventListener("pageshow", (e) => { if (e.persisted) { setTimeout(checkAlive, 3000); } });
 
-      // Every build stamps its file URLs (?v=202611092219), so an old cached loader/framework/wasm can never mix with new data.
+      // Every build stamps its file URLs (?v=202611100031), so an old cached loader/framework/wasm can never mix with new data.
       // GitHub Pages lets browsers keep index.html for 10 minutes: version.json (never cached) names the live build; a
       // stale page reloads itself once onto it (the per-stamp flag stops any loop). Saves (IndexedDB) are never touched.
       var cubedStartLoader = () => {
@@ -587,7 +587,7 @@
           const flag = "cubed-reloaded-for-" + live;
           let reloaded = false;
           try { reloaded = sessionStorage.getItem(flag) === "1"; } catch (e) {}
-          if (live && live !== "202611092219" && !reloaded) {
+          if (live && live !== "202611100031" && !reloaded) {
             try { sessionStorage.setItem(flag, "1"); } catch (e) {}
             const u = new URL(location.href);
             u.searchParams.set("b", live);
